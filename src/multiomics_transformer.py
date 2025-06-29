@@ -22,7 +22,9 @@ from typing import List, Tuple
 import numpy as np
 import torch
 from torch import nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, Subset
+from sklearn.metrics import roc_auc_score, roc_curve
+import matplotlib.pyplot as plt
 
 
 # -------------------------------------------------------------
@@ -34,42 +36,63 @@ def tokenize_sequence(seq: str, vocab: dict[str, int]) -> List[int]:
     return [vocab.get(ch, vocab["N"]) for ch in seq]
 
 
-def load_cfrna_sequences(path: Path) -> List[str]:
-    """Load cfRNA sequences and preprocess them into tokenizable strings.
+def load_sequences(path: Path) -> Tuple[List[str], List[int]]:
+    """Load sequences and labels from a CSV file.
+
+    The expected format is ``sequence,label`` per line with a header row.
 
     Parameters
     ----------
     path : Path
-        Path to the directory containing cfRNA sequencing data.
+        Path to the CSV file containing sequences and labels.
 
     Returns
     -------
-    List[str]
-        Preprocessed cfRNA sequences.
+    Tuple[List[str], List[int]]
+        Lists of sequences and integer labels.
     """
-    # TODO: Implement actual loading logic. This is a placeholder.
-    # The real implementation should parse FASTQ/VCF files and create
-    # sequences as described in the manuscript.
-    return ["ACGT" * 37]  # example 148 bp sequence
+    sequences: List[str] = []
+    labels: List[int] = []
+    with path.open() as fh:
+        next(fh)  # skip header
+        for line in fh:
+            seq, lab = line.strip().split(",")
+            sequences.append(seq)
+            labels.append(int(lab))
+    return sequences, labels
 
 
-def load_cfdna_sequences(path: Path) -> List[str]:
-    """Load cfDNA sequences and preprocess them into tokenizable strings."""
-    # TODO: Replace with project-specific logic.
-    return ["TGCA" * 37]
+def load_cfrna_sequences(path: Path) -> Tuple[List[str], List[int]]:
+    """Wrapper for backward compatibility."""
+    return load_sequences(path)
+
+
+def load_cfdna_sequences(path: Path) -> Tuple[List[str], List[int]]:
+    """Wrapper for backward compatibility."""
+    return load_sequences(path)
 
 
 class OmicsDataset(Dataset):
-    """PyTorch dataset for tokenized omics sequences."""
+    """PyTorch dataset for tokenized omics sequences and labels."""
 
-    def __init__(self, sequences: List[str], vocab: dict[str, int]):
+    def __init__(self, sequences: List[str], labels: List[int], vocab: dict[str, int]):
         self.tokens = [torch.tensor(tokenize_sequence(s, vocab)) for s in sequences]
+        self.labels = torch.tensor(labels, dtype=torch.float32)
 
     def __len__(self) -> int:
         return len(self.tokens)
 
-    def __getitem__(self, idx: int) -> torch.Tensor:
-        return self.tokens[idx]
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        return self.tokens[idx], self.labels[idx]
+
+
+def train_test_split(dataset: Dataset, test_ratio: float = 0.2) -> Tuple[Subset, Subset]:
+    """Split a dataset into train and test subsets."""
+    indices = np.random.permutation(len(dataset))
+    test_size = int(len(dataset) * test_ratio)
+    test_idx = indices[:test_size]
+    train_idx = indices[test_size:]
+    return Subset(dataset, train_idx), Subset(dataset, test_idx)
 
 
 # -------------------------------------------------------------
@@ -114,38 +137,54 @@ class PTBTransformer(nn.Module):
 # Training and evaluation
 # -------------------------------------------------------------
 
-def collate_fn(batch: List[torch.Tensor]) -> torch.Tensor:
-    """Pad sequences in the batch to equal length."""
-    lengths = [len(x) for x in batch]
+def collate_fn(batch: List[Tuple[torch.Tensor, torch.Tensor]]) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Pad sequences in the batch to equal length and stack labels."""
+    seqs, labels = zip(*batch)
+    lengths = [len(x) for x in seqs]
     max_len = max(lengths)
-    padded = [torch.cat([x, x.new_zeros(max_len - len(x))]) for x in batch]
-    return torch.stack(padded)
+    padded = [torch.cat([x, x.new_zeros(max_len - len(x))]) for x in seqs]
+    return torch.stack(padded), torch.stack(labels)
 
 
 def train_epoch(model: nn.Module, loader: DataLoader, optim: torch.optim.Optimizer) -> float:
+    """Train for a single epoch."""
     model.train()
     total_loss = 0.0
     criterion = nn.BCELoss()
-    for batch in loader:
+    for seqs, labels in loader:
         optim.zero_grad()
-        preds = model(batch)
-        labels = torch.zeros_like(preds)  # placeholder labels
+        preds = model(seqs)
         loss = criterion(preds, labels)
         loss.backward()
         optim.step()
-        total_loss += loss.item() * len(batch)
+        total_loss += loss.item() * len(seqs)
     return total_loss / len(loader.dataset)
 
 
-def evaluate(model: nn.Module, loader: DataLoader) -> float:
+def evaluate(model: nn.Module, loader: DataLoader, plot_path: Path | None = None) -> float:
+    """Evaluate on the test set and optionally save a ROC curve."""
     model.eval()
     preds = []
+    labels = []
     with torch.no_grad():
-        for batch in loader:
-            preds.append(model(batch))
-    preds = torch.cat(preds)
-    # Placeholder metric; replace with AUC calculation
-    return preds.mean().item()
+        for seqs, labs in loader:
+            preds.append(model(seqs))
+            labels.append(labs)
+    preds_t = torch.cat(preds).cpu().numpy()
+    labels_t = torch.cat(labels).cpu().numpy()
+    auc = roc_auc_score(labels_t, preds_t)
+    if plot_path is not None:
+        fpr, tpr, _ = roc_curve(labels_t, preds_t)
+        plt.figure()
+        plt.plot(fpr, tpr, label=f"AUROC={auc:.2f}")
+        plt.plot([0, 1], [0, 1], "k--")
+        plt.xlabel("False Positive Rate")
+        plt.ylabel("True Positive Rate")
+        plt.legend(loc="lower right")
+        plt.tight_layout()
+        plt.savefig(plot_path)
+        plt.close()
+    return auc
 
 
 # -------------------------------------------------------------
@@ -154,23 +193,26 @@ def evaluate(model: nn.Module, loader: DataLoader) -> float:
 
 def main(args: argparse.Namespace) -> None:
     vocab = {"A": 0, "C": 1, "G": 2, "T": 3, "N": 4}
-    cfrna_seqs = load_cfrna_sequences(Path(args.cfrna))
-    cfdna_seqs = load_cfdna_sequences(Path(args.cfdna))
+    cfrna_seqs, cfrna_labels = load_cfrna_sequences(Path(args.cfrna))
+    cfdna_seqs, cfdna_labels = load_cfdna_sequences(Path(args.cfdna))
     sequences = cfrna_seqs + cfdna_seqs
+    labels = cfrna_labels + cfdna_labels
 
-    dataset = OmicsDataset(sequences, vocab)
-    loader = DataLoader(dataset, batch_size=8, shuffle=True, collate_fn=collate_fn)
+    dataset = OmicsDataset(sequences, labels, vocab)
+    train_ds, test_ds = train_test_split(dataset, test_ratio=0.2)
+    train_loader = DataLoader(train_ds, batch_size=8, shuffle=True, collate_fn=collate_fn)
+    test_loader = DataLoader(test_ds, batch_size=8, shuffle=False, collate_fn=collate_fn)
 
     config = ModelConfig()
     model = PTBTransformer(config)
     optim = torch.optim.AdamW(model.parameters(), lr=1e-4)
 
     for epoch in range(args.epochs):
-        loss = train_epoch(model, loader, optim)
+        loss = train_epoch(model, train_loader, optim)
         print(f"Epoch {epoch+1}: loss={loss:.4f}")
 
-    score = evaluate(model, loader)
-    print(f"Evaluation score (placeholder): {score:.4f}")
+    auc = evaluate(model, test_loader, plot_path=Path(args.plot) if args.plot else None)
+    print(f"Test AUROC: {auc:.4f}")
 
 
 if __name__ == "__main__":
@@ -178,4 +220,5 @@ if __name__ == "__main__":
     parser.add_argument("--cfrna", type=str, required=True, help="Path to cfRNA data")
     parser.add_argument("--cfdna", type=str, required=True, help="Path to cfDNA data")
     parser.add_argument("--epochs", type=int, default=1, help="Number of training epochs")
+    parser.add_argument("--plot", type=str, default="", help="Path to save ROC curve image")
     main(parser.parse_args())
