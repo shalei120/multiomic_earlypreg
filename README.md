@@ -16,43 +16,37 @@ pip install torch numpy scikit-learn matplotlib pandas
 ## Usage
 
 Run the training script with paths to your preprocessed cfRNA and cfDNA data.
-Example cfRNA and cfDNA files are included in the ``data`` directory.
-The ``sample_cfrna.csv`` file was generated from an Excel sheet and contains two
-columns (gene identifier and count):
+The repository does not include example datasets. Provide your own files matching
+the expected formats:
 
-```text
-data/sample_cfrna.csv
-data/sample_cfdna.csv
-```
+* ``cfRNA`` file – two columns with either nucleotide sequences and binary labels
+  or gene identifiers with expression counts.
+* ``cfDNA`` file – two columns with nucleotide sequences and binary labels.
 
-Launch a training run on the sample data with:
+Train the transformer model with:
 
 ```bash
-python src/training/train_transformer.py --cfrna data/sample_cfrna.csv \
-       --cfdna data/sample_cfdna.csv --epochs 5 --plot roc.png
+python src/training/train_transformer.py --cfrna <cfRNA.csv> \
+       --cfdna <cfDNA.csv> --epochs 5 --plot roc.png
 ```
 
-This command trains the model and saves ``roc.png`` containing the classification ROC curve.
-
-Replace ``data/sample_cfrna.csv`` with a file containing gene identifiers and expression counts. ``data/sample_cfdna.csv`` should contain nucleotide sequences and binary labels.
+The command reports the AUROC and saves ``roc.png`` if a plot path is provided.
 
 ## Early pregnancy tabular data
 
-This repository also includes a simplified tabular example. The files
-`cfDNA_early.csv` and `cfRNA_early.csv` store sample identifiers with
-corresponding labels, while `FJ_02.All_sample_reads_count.csv` provides gene
-counts for each sample.
+This repository also provides a simplified tabular example. You must supply three CSV files:
 
-Train the MLP classifier on this data with:
+* ``cfDNA`` labels – sample identifiers with binary labels
+* ``cfRNA`` labels – sample identifiers with binary labels
+* ``FJ_02.All_sample_reads_count.csv`` containing gene counts per sample
+
+Run the MLP classifier with:
 
 ```bash
 python src/training/train_tabular.py \
-  --features data/FJ_02.All_sample_reads_count.csv \
-  --cfrna data/cfRNA_early.csv \
-  --cfdna data/cfDNA_early.csv --epochs 20 --plot roc_tabular.png
+  --features <features.csv> \
+  --cfrna <cfRNA_labels.csv> \
+  --cfdna <cfDNA_labels.csv> --epochs 20 --plot roc_tabular.png
 ```
 
-The script reports the AUROC after training and saves a ROC curve if a path is
-specified.
-
-The CSV files in `data` are intentionally empty placeholders. Replace them with your own preprocessed datasets before running the training scripts.
+The script reports the AUROC after training and saves a ROC curve if a plot path is provided.
