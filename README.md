@@ -10,26 +10,43 @@ This repository demonstrates a prototype implementation of a sequence-based tran
 Install dependencies with:
 
 ```bash
-pip install torch numpy scikit-learn matplotlib
+pip install torch numpy scikit-learn matplotlib pandas
 ```
 
 ## Usage
 
 Run the training script with paths to your preprocessed cfRNA and cfDNA data.
-Example CSV files are included in the ``data`` directory:
+The repository does not include example datasets. Provide your own files matching
+the expected formats:
 
-```text
-data/sample_cfrna.csv
-data/sample_cfdna.csv
-```
+* ``cfRNA`` file – two columns with either nucleotide sequences and binary labels
+  or gene identifiers with expression counts.
+* ``cfDNA`` file – two columns with nucleotide sequences and binary labels.
 
-Launch a training run on the sample data with:
+Train the transformer model with:
 
 ```bash
-python src/multiomics_transformer.py --cfrna data/sample_cfrna.csv \
-       --cfdna data/sample_cfdna.csv --epochs 5 --plot roc.png
+python src/training/train_transformer.py --cfrna <cfRNA.csv> \
+       --cfdna <cfDNA.csv> --epochs 5 --plot roc.png
 ```
 
-This command trains the model and saves ``roc.png`` containing the classification ROC curve.
+The command reports the AUROC and saves ``roc.png`` if a plot path is provided.
 
-Replace the sample CSVs with your own files formatted as ``sequence,label`` to use real data.
+## Early pregnancy tabular data
+
+This repository also provides a simplified tabular example. You must supply three CSV files:
+
+* ``cfDNA`` labels – sample identifiers with binary labels
+* ``cfRNA`` labels – sample identifiers with binary labels
+* ``FJ_02.All_sample_reads_count.csv`` containing gene counts per sample
+
+Run the MLP classifier with:
+
+```bash
+python src/training/train_tabular.py \
+  --features <features.csv> \
+  --cfrna <cfRNA_labels.csv> \
+  --cfdna <cfDNA_labels.csv> --epochs 20 --plot roc_tabular.png
+```
+
+The script reports the AUROC after training and saves a ROC curve if a plot path is provided.
