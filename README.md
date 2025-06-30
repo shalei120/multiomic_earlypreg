@@ -54,3 +54,5 @@ python src/training/train_tabular.py \
 
 The script reports the AUROC after training and saves a ROC curve if a path is
 specified.
+
+The CSV files in `data` are intentionally empty placeholders. Replace them with your own preprocessed datasets before running the training scripts.
